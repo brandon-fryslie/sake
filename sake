@@ -1,0 +1,143 @@
+#!/usr/bin/env coffee
+
+# repl action
+#
+# be able to start a server
+# be able to start a client
+#
+# start a server my square code can talk to
+#
+# threaded output from servers
+#
+# timed repeating output (1 per second, etc)
+#
+# pipe output from clients + servers to prefixed output
+#
+# allow sending data
+#
+# need to be able to pipe data around somehow
+
+WebSocket = require 'ws'
+
+nom = require 'nomnom'
+
+_ = require 'lodash'
+
+repl = require './repl'
+
+# example command
+# sake server
+#   start a server on a port
+#   allow specify port?
+#   prints out messages
+#
+
+# sake client
+#   specify port
+#   allow sending message
+
+# repl command
+#   client connect on a port
+#
+
+parse_opts = ->
+
+  nom.command('server').callback (opts) ->
+
+  nom.command('client').callback ([command, port]) ->
+
+  nom.parse()
+
+opts = parse_opts()
+
+repl_lib = repl.repl_lib
+
+#######################################################
+# repl shit
+########################################################
+
+
+SERVERS = []
+CLIENTS = []
+
+start_server = (port) ->
+    server = new WebSocket.Server port: port
+    repl_lib.print "Starting server on #{port}"
+    server.on 'connection', (ws) ->
+      key = ws.upgradeReq.headers['sec-websocket-key']
+      repl_lib.print  'New connection'.bold.green, key.cyan
+
+      ws.on 'message', (str) =>
+        repl_lib.print 'Received message:'.bold.green, str
+
+      ws.on 'close', ->
+        repl_lib.print 'Closing connection'.yellow
+
+    server.on 'error', (err) ->
+      repl_lib.print 'Could not start server:'.red, err.code
+
+    SERVERS.push server
+
+repl_lib.add_command
+  name: 'server'
+  help: 'Start a server'
+  fn: start_server
+
+start_client = (port) ->
+  repl_lib.print "Connecting client to port #{port}"
+  address = "ws://localhost:#{port}"
+  client = new WebSocket address
+  client.on 'error', (err) ->
+    if err.code is 'ECONNREFUSED'
+      repl_lib.print "Connection refused:".red, address.cyan
+    else
+      repl_lib.print 'Unknown error', err
+
+  client.on 'open', ->
+    repl_lib.print 'Connection opened!'
+  CLIENTS.push client
+
+
+repl_lib.add_command
+  name: 'client'
+  help: 'Start a client'
+  fn: start_client
+
+repl_lib.add_command
+  name: 'send'
+  help: 'Send data to all clients'
+  fn: (data='ILikeBigButtsAndICannotLie') ->
+    _.invoke CLIENTS, 'send', data
+
+repl_lib.add_command
+  name: 'timed-send'
+  help: 'Time sending data to all clients [timeout] [data]'
+  fn: (rate, data) ->
+    repl_lib.print 'Sending data on a timeout:', "#{rate}ms", data
+    setInterval (->
+      _.invoke CLIENTS, 'send', data
+    ), parseInt(rate, 10)
+
+repl_lib.add_command
+  name: 'status'
+  help: 'Status of running crap'
+  fn: ->
+    if CLIENTS.length
+      repl_lib.print "Clients"
+      repl_lib.print _(CLIENTS).pluck('url').value().join('\n')
+    if SERVERS.length
+      repl_lib.print "Servers"
+      repl_lib.print _(SERVERS).pluck('_server').pluck('_connectionKey').value().join '\n'
+
+
+#######################################################
+
+if opts[0] is 'server'
+  start_server opts[1]
+else if opts[0] is 'client'
+  start_client opts[1]
+
+
+repl.start()
+
+process
